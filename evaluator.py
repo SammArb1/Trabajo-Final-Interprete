@@ -311,6 +311,13 @@ def evaluate(node, env):
         if is_error(right): return right
         return eval_prefix_expression(node.operator, right)
     elif isinstance(node, InfixExpression):
+        # Intercepción de operadores lógicos booleanos para evaluación en cortocircuito (Short-circuit evaluation)
+        # Se interceptan antes de evaluar node.right para evitar cómputo innecesario o errores.
+        if node.operator in ("and", "&&"):
+            return eval_logical_and_expression(node, env)
+        elif node.operator in ("or", "||"):
+            return eval_logical_or_expression(node, env)
+
         left = evaluate(node.left, env)
         if is_error(left): return left
         right = evaluate(node.right, env)
@@ -380,11 +387,91 @@ def eval_minus_prefix_operator_expression(right):
         return Error(f"operador desconocido: -{right.type()}")
     return Integer(-right.value)
 
+def eval_logical_and_expression(node, env):
+    """
+    Propósito:
+        Evalúa una expresión lógica de conjunción ('and' o '&&') implementando
+        semántica de evaluación en cortocircuito (short-circuit / evaluación perezosa).
+
+    Precedencia y asociatividad:
+        - Precedencia: Mayor que 'or'/'||', menor que comparaciones relacionales ('==', '<', etc.).
+        - Asociatividad: Por la izquierda (left-associative).
+
+    Semántica de evaluación:
+        1. Evalúa estrictamente el operando izquierdo (node.left). Si produce un Error, se retorna inmediatamente.
+        2. Aplica is_truthy(left):
+           - Si 'left' es FALSO, se produce el cortocircuito: se omite por completo la
+             evaluación del operando derecho (node.right), protegiendo contra efectos
+             secundarios indeseados o errores de ejecución (ej. división por cero),
+             y se retorna inmediatamente 'left' (o FALSE_OBJ si se normaliza a booleano).
+           - Si 'left' es VERDADERO, el resultado final depende enteramente del operando
+             derecho, por lo que se procede a evaluar y retornar evaluate(node.right, env).
+    """
+    # 1. Evaluación del operando izquierdo:
+    left = evaluate(node.left, env)
+    if is_error(left):
+        return left
+
+    # 2. Comprobación de cortocircuito (Short-circuit):
+    # Si el operando izquierdo es falso, la conjunción (A and B) es falsa sin importar B.
+    # Por definición de evaluación perezosa, node.right NO debe evaluarse.
+    if not is_truthy(left):
+        return left if left.type() == ObjType.BOOLEAN else FALSE_OBJ
+
+    # 3. Evaluación perezosa del operando derecho:
+    # Solo se evalúa si el operando izquierdo resultó verdadero.
+    right = evaluate(node.right, env)
+    if is_error(right):
+        return right
+    return right if right.type() == ObjType.BOOLEAN else native_bool_to_bool_object(is_truthy(right))
+
+
+def eval_logical_or_expression(node, env):
+    """
+    Propósito:
+        Evalúa una expresión lógica de disyunción ('or' o '||') implementando
+        semántica de evaluación en cortocircuito (short-circuit / evaluación perezosa).
+
+    Precedencia y asociatividad:
+        - Precedencia: Menor que 'and'/'&&', asociatividad por la izquierda.
+        - Asociatividad: Por la izquierda (left-associative).
+
+    Semántica de evaluación:
+        1. Evalúa estrictamente el operando izquierdo (node.left). Si produce un Error, se retorna inmediatamente.
+        2. Aplica is_truthy(left):
+           - Si 'left' es VERDADERO, se produce el cortocircuito: la disyunción completa
+             (A or B) ya es verdadera independientemente de B. Se retorna inmediatamente
+             'left' (o TRUE_OBJ) SIN evaluar node.right.
+           - Si 'left' es FALSO, se evalúa y retorna el resultado de evaluate(node.right, env).
+    """
+    # 1. Evaluación del operando izquierdo:
+    left = evaluate(node.left, env)
+    if is_error(left):
+        return left
+
+    # 2. Comprobación de cortocircuito (Short-circuit):
+    # Si el operando izquierdo es verdadero, la disyunción (A or B) es verdadera sin importar B.
+    # Por definición de evaluación perezosa, node.right NO debe evaluarse.
+    if is_truthy(left):
+        return left if left.type() == ObjType.BOOLEAN else TRUE_OBJ
+
+    # 3. Evaluación perezosa del operando derecho:
+    # Solo se evalúa si el operando izquierdo resultó falso.
+    right = evaluate(node.right, env)
+    if is_error(right):
+        return right
+    return right if right.type() == ObjType.BOOLEAN else native_bool_to_bool_object(is_truthy(right))
+
+
 def eval_infix_expression(operator, left, right):
     if left.type() == ObjType.INTEGER and right.type() == ObjType.INTEGER:
         return eval_integer_infix_expression(operator, left, right)
     elif left.type() == ObjType.STRING and right.type() == ObjType.STRING:
         return eval_string_infix_expression(operator, left, right)
+    elif operator in ("and", "&&"):
+        return native_bool_to_bool_object(is_truthy(left) and is_truthy(right))
+    elif operator in ("or", "||"):
+        return native_bool_to_bool_object(is_truthy(left) or is_truthy(right))
     elif operator == "==": return native_bool_to_bool_object(left == right)
     elif operator == "!=": return native_bool_to_bool_object(left != right)
     elif left.type() != right.type():

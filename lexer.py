@@ -2,7 +2,7 @@
 
 from tokens import Token, lookup_ident, EQ, ASSIGN, PLUS, MINUS, BANG, NOT_EQ
 from tokens import SLASH, POW, ASTERISK, LTE, LT, GTE, GT, SEMICOLON, COMMA
-from tokens import LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, EOF, ILLEGAL, INT, STRING
+from tokens import LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, EOF, ILLEGAL, INT, STRING, AND, OR
 
 class Lexer:
     def __init__(self, input_text):
@@ -96,6 +96,20 @@ class Lexer:
             tok = Token(LBRACKET, self.ch, tok_line, tok_col)
         elif self.ch == ']':
             tok = Token(RBRACKET, self.ch, tok_line, tok_col)
+        elif self.ch == '&':
+            if self.peek_char() == '&':
+                ch = self.ch
+                self.read_char()
+                tok = Token(AND, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
+        elif self.ch == '|':
+            if self.peek_char() == '|':
+                ch = self.ch
+                self.read_char()
+                tok = Token(OR, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
         elif self.ch == '"' or self.ch == "'":
             quote_type = self.ch
             str_val, err = self.read_string(quote_type)

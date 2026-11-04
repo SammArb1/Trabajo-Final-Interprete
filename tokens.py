@@ -19,6 +19,8 @@ GTE = ">="
 EQ = "=="
 NOT_EQ = "!="
 POW = "**"
+AND = "AND"
+OR = "OR"
 
 COMMA = ","
 SEMICOLON = ";"
@@ -53,6 +55,8 @@ KEYWORDS = {
     "for": FOR,
     "while": WHILE,
     "break": BREAK,
+    "and": AND,
+    "or": OR,
 }
 
 class Token:

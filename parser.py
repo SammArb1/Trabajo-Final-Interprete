@@ -5,17 +5,21 @@ from ast_nodes import *
 
 LOWEST = 1
 ASSIGN_PREC = 2
-EQUALS = 3
-LESSGREATER = 4
-SUM = 5
-PRODUCT = 6
-POWER = 7
-PREFIX = 8
-CALL = 9
-INDEX = 10
+OR_PREC = 3
+AND_PREC = 4
+EQUALS = 5
+LESSGREATER = 6
+SUM = 7
+PRODUCT = 8
+POWER = 9
+PREFIX = 10
+CALL = 11
+INDEX = 12
 
 PRECEDENCES = {
     ASSIGN: ASSIGN_PREC,
+    OR: OR_PREC,
+    AND: AND_PREC,
     EQ: EQUALS,
     NOT_EQ: EQUALS,
     LT: LESSGREATER,
@@ -65,6 +69,8 @@ class Parser:
         self.register_infix(GT, self.parse_infix_expression)
         self.register_infix(LTE, self.parse_infix_expression)
         self.register_infix(GTE, self.parse_infix_expression)
+        self.register_infix(AND, self.parse_infix_expression)
+        self.register_infix(OR, self.parse_infix_expression)
         self.register_infix(LPAREN, self.parse_call_expression)
         self.register_infix(LBRACKET, self.parse_index_expression)
         self.register_infix(ASSIGN, self.parse_assign_expression)
@@ -300,6 +306,17 @@ class Parser:
         return PrefixExpression(token, operator, right)
 
     def parse_infix_expression(self, left):
+        """
+        Propósito:
+            Construye un nodo InfixExpression para operadores binarios aritméticos,
+            relacionales y lógicos (incluyendo 'and', 'or', '&&', '||').
+
+        Precedencia y Asociatividad:
+            - Operadores estándar (+, -, *, /, and, or, ==, etc.): asociatividad por la izquierda
+              utilizando la precedencia actual del operador.
+            - Operador de potencia (**): asociatividad hacia la derecha decrementando en 1
+              la precedencia efectiva al parsear el operando derecho.
+        """
         token = self.cur_token
         operator = self.cur_token.literal
         precedence = self.cur_precedence()
@@ -308,6 +325,7 @@ class Parser:
             # Asociatividad hacia la derecha para potencia
             right = self.parse_expression(precedence - 1)
         else:
+            # Asociatividad por la izquierda para operaciones aritméticas, relacionales y lógicas
             right = self.parse_expression(precedence)
         return InfixExpression(token, left, operator, right)
         
