@@ -1,8 +1,9 @@
-# ANALIZADOR SINTACTICO
+# ANALIZADOR SINTÁCTICO (PARSER PRATT) — construye el AST a partir de tokens con precedencias
 
 from tokens import *
 from ast_nodes import *
 
+# Niveles de precedencia para parsing de expresiones (Pratt Parser)
 LOWEST = 1
 ASSIGN_PREC = 2
 OR_PREC = 3
@@ -16,6 +17,7 @@ PREFIX = 10
 CALL = 11
 INDEX = 12
 
+# Tabla de precedencias por tipo de operador
 PRECEDENCES = {
     ASSIGN: ASSIGN_PREC,
     OR: OR_PREC,
@@ -329,6 +331,7 @@ class Parser:
         return InfixExpression(token, left, operator, right)
         
     def parse_assign_expression(self, left):
+        # Validación de lvalue: solo identificadores o expresiones de índice (arr[i]) son asignables
         if not isinstance(left, (Identifier, IndexExpression)):
             line = self.cur_token.line if self.cur_token else "?"
             col = self.cur_token.column if self.cur_token else "?"

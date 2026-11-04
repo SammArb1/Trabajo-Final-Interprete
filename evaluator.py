@@ -11,9 +11,7 @@ FALSE_OBJ = BooleanVal(False)
 NULL_OBJ  = Null()
 BREAK_OBJ = BreakValue()
 
-# ---------------------------------------------------------------------------
 # UTILIDADES DE RUNTIME
-# ---------------------------------------------------------------------------
 
 def is_error(obj):
     # Detecta errores del runtime para propagarlos inmediatamente (fail-fast)
@@ -37,11 +35,7 @@ def is_truthy(obj):
         return False
     return True
 
-# ---------------------------------------------------------------------------
-# FUNCIONES INTEGRADAS (BUILT-INS)
-# Aridad estricta: retornan Error si se recibe el número incorrecto de args.
-# Nunca lanzan excepciones Python — siempre retornan un objeto Error del runtime.
-# ---------------------------------------------------------------------------
+# FUNCIONES INTEGRADAS (BUILT-INS) — aridad estricta y emisión de objetos Error sin excepciones nativas
 
 def builtin_len(*args):
     # len(x) — longitud de arrays y strings; aridad exactamente 1
@@ -126,9 +120,7 @@ BUILTINS = {
     "float": Builtin(builtin_float),
 }
 
-# ---------------------------------------------------------------------------
 # MOTOR DE EVALUACIÓN (TREE-WALKING EVALUATOR)
-# ---------------------------------------------------------------------------
 
 def evaluate(node, env):
     # Dispatch central: cada tipo de nodo del AST tiene su rama de evaluación
@@ -416,9 +408,8 @@ def eval_while_expression(we, env):
 
 
 def eval_for_expression(fe, env):
-    # Ámbito propio del for: init puede declarar variables que no escapan al bloque externo
-    new_env = Environment(fe.init and env or env)   # nuevo hijo siempre
-    new_env = Environment(env)
+    # Ámbito propio del for: init declara variables en el entorno hijo sin escapar
+    new_env = Environment(outer=env)
     if fe.init is not None:
         init_res = evaluate(fe.init, new_env)
         if is_error(init_res): return init_res
