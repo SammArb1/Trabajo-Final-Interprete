@@ -9,26 +9,255 @@ FALSE_OBJ = BooleanVal(False)
 NULL_OBJ = Null()
 BREAK_OBJ = BreakValue()
 
-def builtin_len(*args):
-    if len(args) != 1:
-        return Error(f"número incorrecto de argumentos para len: esperado 1, obtenido {len(args)}")
-    arg = args[0]
-    if arg.type() == ObjType.ARRAY:
-        return Integer(len(arg.elements))
-    elif arg.type() == ObjType.STRING:
-        return Integer(len(arg.value))
-    return Error(f"argumento para 'len' no soportado: {arg.type()}")
-
-BUILTINS = {
-    "len": Builtin(builtin_len),
-    "print": Builtin(lambda *args: print(*[a.inspect() for a in args]) or NULL_OBJ)
-}
-
 def is_error(obj):
+    """Verifica si un objeto del runtime representa un error de evaluación."""
     return obj is not None and obj.type() == ObjType.ERROR
 
 def native_bool_to_bool_object(input_val):
+    """Mapea un valor booleano nativo de Python a los singletons del intérprete."""
     return TRUE_OBJ if input_val else FALSE_OBJ
+
+def is_truthy(obj):
+    """
+    Determina si un objeto en tiempo de ejecución evalúa a verdadero (truthy)
+    o falso (falsy) siguiendo la semántica canónica de evaluación:
+    - Null y BooleanVal(False) evalúan a falso.
+    - Integer(0) representa el cero numérico (falso).
+    - StringObj("") representa la cadena vacía (falso).
+    - ArrayObj([]) representa la lista vacía sin elementos (falso).
+    - Cualquier otro objeto (enteros != 0, cadenas pobladas, listas con elementos, funciones) evalúa a verdadero.
+    """
+    if obj is None or obj == NULL_OBJ or obj == FALSE_OBJ:
+        return False
+    if obj.type() == ObjType.INTEGER and obj.value == 0:
+        return False
+    if obj.type() == ObjType.STRING and obj.value == "":
+        return False
+    if obj.type() == ObjType.ARRAY and len(obj.elements) == 0:
+        return False
+    return True
+
+# =============================================================================
+# FUNCIONES INTEGRADAS (BUILT-INS) DEL RUNTIME
+# =============================================================================
+
+def builtin_len(*args):
+    """
+    Propósito:
+        Calcula la cardinalidad o longitud de estructuras de datos indexables (ArrayObj)
+        y secuencias de caracteres (StringObj).
+
+    Parámetros:
+        *args: Argumentos posicionales recibidos desde la llamada en el código evaluado.
+               Requiere aridad estricta de exactamente 1 argumento.
+
+    Retorno:
+        Integer: Instancia que encapsula la cantidad entera de elementos o caracteres.
+
+    Manejo de errores:
+        - Retorna un objeto Error si la aridad es distinta de 1 (aridad estricta).
+        - Retorna un objeto Error si el argumento no es una lista ni una cadena de texto.
+    """
+    # 1. Validación de aridad estricta:
+    # Verificamos que se suministre exactamente un operando conforme a la signatura requerida.
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para len: esperado 1, obtenido {len(args)}")
+
+    arg = args[0]
+
+    # 2. Despacho polimórfico según el tipo de objeto en tiempo de ejecución:
+    # Para estructuras de datos (ArrayObj), medimos la longitud de su lista interna de elementos.
+    if arg.type() == ObjType.ARRAY:
+        return Integer(len(arg.elements))
+    # Para cadenas de texto (StringObj), medimos la cantidad de caracteres de la cadena nativa.
+    elif arg.type() == ObjType.STRING:
+        return Integer(len(arg.value))
+
+    # 3. Manejo de error de tipo controlado:
+    # Retornamos un objeto Error del runtime en vez de lanzar excepciones de Python (evita crashes).
+    return Error(f"argumento para 'len' no soportado: {arg.type()}")
+
+
+def builtin_print(*args):
+    """
+    Propósito:
+        Escribe en la salida estándar (consola) la representación textual legible
+        de uno o más objetos del lenguaje, separados por espacio y finalizando con salto de línea.
+
+    Parámetros:
+        *args: Colección variable de argumentos a desplegar en consola (aridad flexible: >= 0).
+
+    Retorno:
+        Null: Retorna el singleton NULL_OBJ (equivalente a None en Python / ausencia de valor).
+
+    Manejo de errores:
+        No genera errores de aridad ya que admite cero o múltiples argumentos.
+    """
+    # 1. Inspección y formateo de argumentos:
+    # Invocamos el método .inspect() de cada objeto para obtener su representación textual estándar.
+    output_parts = [a.inspect() for a in args]
+
+    # 2. Emisión a la salida estándar:
+    # Desplegamos en pantalla utilizando la función nativa print del host.
+    print(*output_parts)
+
+    # 3. Retorno canónico:
+    # En un lenguaje funcional/orientado a expresiones, toda llamada debe producir un valor.
+    # Siguiendo la convención de Python (None), retornamos NULL_OBJ.
+    return NULL_OBJ
+
+
+def builtin_int(*args):
+    """
+    Propósito:
+        Conversión explícita de un objeto a su representación numérica entera (Integer).
+
+    Parámetros:
+        *args: Argumentos posicionales recibidos desde la llamada en el código evaluado.
+               Requiere aridad estricta de exactamente 1 argumento.
+
+    Retorno:
+        Integer: Objeto numérico entero resultante de la conversión.
+
+    Manejo de errores:
+        - Retorna un objeto Error si se reciben 0 o más de 1 argumentos (aridad inválida).
+        - Retorna un objeto Error si una cadena no contiene una representación entera convertible.
+        - Retorna un objeto Error si el tipo de origen no admite conversión a entero.
+    """
+    # 1. Validación de aridad estricta:
+    # int() requiere exactamente un argumento para realizar el casteo.
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para int: esperado 1, obtenido {len(args)}")
+
+    arg = args[0]
+
+    # 2. Conversión por identidad:
+    # Si el objeto ya es una instancia de Integer, se retorna directamente sin procesamiento adicional.
+    if arg.type() == ObjType.INTEGER:
+        return arg
+
+    # 3. Conversión desde BooleanVal:
+    # Aplica la regla estándar en compiladores donde true mapea a 1 y false mapea a 0.
+    if arg.type() == ObjType.BOOLEAN:
+        return Integer(1 if arg.value else 0)
+
+    # 4. Conversión desde StringObj:
+    # Se analiza el texto eliminando espacios en blanco circundantes.
+    if arg.type() == ObjType.STRING:
+        try:
+            # Intentamos el parseo mediante el conversor nativo int() de Python.
+            parsed_val = int(arg.value.strip())
+            return Integer(parsed_val)
+        except ValueError:
+            # Interceptamos ValueError de Python para evitar el quiebre abrupto del proceso
+            # y propagamos un objeto Error descriptivo propio del entorno de ejecución.
+            return Error(f"no se pudo convertir la cadena '{arg.value}' a entero")
+
+    # 5. Restricción para tipos no convertibles:
+    # Tipos complejos (ArrayObj, FunctionObj, Null) no poseen conversión trivial a entero.
+    return Error(f"argumento para 'int' no soportado: {arg.type()}")
+
+
+def builtin_str(*args):
+    """
+    Propósito:
+        Conversión explícita de cualquier objeto del lenguaje a su representación
+        textual canónica (StringObj).
+
+    Parámetros:
+        *args: Argumentos posicionales recibidos desde la llamada en el código evaluado.
+               Requiere aridad estricta de exactamente 1 argumento.
+
+    Retorno:
+        StringObj: Cadena de texto resultante con la inspección del objeto.
+
+    Manejo de errores:
+        - Retorna un objeto Error si la aridad es distinta de 1.
+    """
+    # 1. Validación de aridad estricta:
+    # str() debe recibir exactamente un argumento a serializar.
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para str: esperado 1, obtenido {len(args)}")
+
+    arg = args[0]
+
+    # 2. Delegación al protocolo de inspección:
+    # Toda clase que hereda de Obj implementa .inspect(), asegurando una conversión
+    # polimórfica y robusta sin riesgo de excepción en tiempo de ejecución.
+    return StringObj(arg.inspect())
+
+
+def builtin_bool(*args):
+    """
+    Propósito:
+        Conversión explícita de un objeto a su valor de verdad booleano (BooleanVal),
+        aplicando la semántica canónica de verdad y falsedad (truthiness / falsiness).
+
+    Parámetros:
+        *args: Argumentos posicionales recibidos desde la llamada en el código evaluado.
+               Requiere aridad estricta de exactamente 1 argumento.
+
+    Retorno:
+        BooleanVal: TRUE_OBJ si el objeto evalúa como verdadero; FALSE_OBJ si evalúa como falso.
+
+    Manejo de errores:
+        - Retorna un objeto Error si la aridad es distinta de 1.
+    """
+    # 1. Validación de aridad estricta:
+    # bool() debe invocarse con exactamente un argumento.
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para bool: esperado 1, obtenido {len(args)}")
+
+    arg = args[0]
+
+    # 2. Evaluación de falsedad / verdad:
+    # Delegamos a la función central is_truthy() para mantener coherencia semántica unificada
+    # en todo el compilador (utilizada igualmente por condicionales if y ciclos while/for).
+    return native_bool_to_bool_object(is_truthy(arg))
+
+
+def builtin_type(*args):
+    """
+    Propósito:
+        Inspección dinámica de metadatos de tipos en tiempo de ejecución,
+        permitiendo introspection y verificación de tipos en el lenguaje evaluado.
+
+    Parámetros:
+        *args: Argumentos posicionales recibidos desde la llamada en el código evaluado.
+               Requiere aridad estricta de exactamente 1 argumento.
+
+    Retorno:
+        StringObj: Cadena que contiene el identificador literal del tipo interno
+                   ("INTEGER", "STRING", "BOOLEAN", "ARRAY", "FUNCTION", "NULL", etc.).
+
+    Manejo de errores:
+        - Retorna un objeto Error si la aridad es distinta de 1.
+    """
+    # 1. Validación de aridad estricta:
+    # type() requiere exactamente un elemento para inspeccionar sus metadatos.
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para type: esperado 1, obtenido {len(args)}")
+
+    arg = args[0]
+
+    # 2. Consulta de metadatos del objeto:
+    # Invocamos el método .type() que expone cada subclase de Obj conforme a ObjType
+    # y devolvemos el resultado empaquetado como un StringObj accesible para el programa.
+    return StringObj(arg.type())
+
+
+BUILTINS = {
+    "len": Builtin(builtin_len),
+    "print": Builtin(builtin_print),
+    "int": Builtin(builtin_int),
+    "str": Builtin(builtin_str),
+    "bool": Builtin(builtin_bool),
+    "type": Builtin(builtin_type)
+}
+
+# =============================================================================
+# MOTOR DE EVALUACIÓN (TREE-WALKING EVALUATOR)
+# =============================================================================
 
 def evaluate(node, env):
     if node is None:
@@ -142,7 +371,7 @@ def eval_prefix_expression(operator, right):
     return Error(f"operador desconocido: {operator}{right.type()}")
 
 def eval_bang_operator_expression(right):
-    if right == TRUE_OBJ or right != FALSE_OBJ and right != NULL_OBJ:
+    if is_truthy(right):
         return FALSE_OBJ
     return TRUE_OBJ
 
@@ -192,10 +421,6 @@ def eval_integer_infix_expression(operator, left, right):
     elif operator == "==": return native_bool_to_bool_object(l_val == r_val)
     elif operator == "!=": return native_bool_to_bool_object(l_val != r_val)
     return Error(f"operador desconocido: {left.type()} {operator} {right.type()}")
-
-def is_truthy(obj):
-    if obj == NULL_OBJ or obj == FALSE_OBJ: return False
-    return True
 
 def eval_if_expression(ie, env):
     condition = evaluate(ie.condition, env)
