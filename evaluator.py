@@ -31,6 +31,9 @@ def is_truthy(obj):
         return False
     if obj.type() == ObjType.INTEGER and obj.value == 0:
         return False
+    # 0.0 en punto flotante evalúa a falso
+    if obj.type() == ObjType.FLOAT and obj.value == 0.0:
+        return False
     if obj.type() == ObjType.STRING and obj.value == "":
         return False
     if obj.type() == ObjType.ARRAY and len(obj.elements) == 0:
@@ -141,6 +144,10 @@ def builtin_int(*args):
     if arg.type() == ObjType.BOOLEAN:
         return Integer(1 if arg.value else 0)
 
+    # Conversión de flotante a entero por truncamiento
+    if arg.type() == ObjType.FLOAT:
+        return Integer(int(arg.value))
+
     # 4. Conversión desde StringObj:
     # Se analiza el texto eliminando espacios en blanco circundantes.
     if arg.type() == ObjType.STRING:
@@ -246,13 +253,34 @@ def builtin_type(*args):
     return StringObj(arg.type())
 
 
+def builtin_float(*args):
+    # Validación de aridad: float() acepta exactamente un argumento
+    if len(args) != 1:
+        return Error(f"número incorrecto de argumentos para float: esperado 1, obtenido {len(args)}")
+    arg = args[0]
+    if arg.type() == ObjType.FLOAT:
+        return arg  # ya es flotante, identidad directa
+    if arg.type() == ObjType.INTEGER:
+        return Float(float(arg.value))  # widening: int → float
+    if arg.type() == ObjType.BOOLEAN:
+        return Float(1.0 if arg.value else 0.0)  # true→1.0, false→0.0
+    if arg.type() == ObjType.STRING:
+        try:
+            return Float(float(arg.value.strip()))
+        except ValueError:
+            # Cadena no numérica: error de runtime en vez de excepción de Python
+            return Error(f"no se pudo convertir la cadena '{arg.value}' a float")
+    return Error(f"argumento para 'float' no soportado: {arg.type()}")
+
+
 BUILTINS = {
     "len": Builtin(builtin_len),
     "print": Builtin(builtin_print),
     "int": Builtin(builtin_int),
     "str": Builtin(builtin_str),
     "bool": Builtin(builtin_bool),
-    "type": Builtin(builtin_type)
+    "type": Builtin(builtin_type),
+    "float": Builtin(builtin_float)
 }
 
 # =============================================================================
@@ -302,6 +330,9 @@ def evaluate(node, env):
         return Error(f"destino de asignación inválido: {type(node.name).__name__}")
     elif isinstance(node, IntegerLiteral):
         return Integer(node.value)
+    elif isinstance(node, FloatLiteral):
+        # Envuelve el valor float nativo en el objeto del runtime
+        return Float(node.value)
     elif isinstance(node, StringLiteral):
         return StringObj(node.value)
     elif isinstance(node, Boolean):
@@ -383,9 +414,12 @@ def eval_bang_operator_expression(right):
     return TRUE_OBJ
 
 def eval_minus_prefix_operator_expression(right):
-    if right.type() != ObjType.INTEGER:
-        return Error(f"operador desconocido: -{right.type()}")
-    return Integer(-right.value)
+    if right.type() == ObjType.INTEGER:
+        return Integer(-right.value)
+    if right.type() == ObjType.FLOAT:
+        # Negación de punto flotante
+        return Float(-right.value)
+    return Error(f"operador desconocido: -{right.type()}")
 
 def eval_logical_and_expression(node, env):
     """
@@ -466,6 +500,9 @@ def eval_logical_or_expression(node, env):
 def eval_infix_expression(operator, left, right):
     if left.type() == ObjType.INTEGER and right.type() == ObjType.INTEGER:
         return eval_integer_infix_expression(operator, left, right)
+    # Si al menos uno de los operandos es Float, coerción implícita a punto flotante
+    elif left.type() in (ObjType.FLOAT, ObjType.INTEGER) and right.type() in (ObjType.FLOAT, ObjType.INTEGER):
+        return eval_numeric_infix_expression(operator, left, right)
     elif left.type() == ObjType.STRING and right.type() == ObjType.STRING:
         return eval_string_infix_expression(operator, left, right)
     elif operator in ("and", "&&"):
@@ -487,6 +524,34 @@ def eval_string_infix_expression(operator, left, right):
         return native_bool_to_bool_object(left.value != right.value)
     return Error(f"operador desconocido: {left.type()} {operator} {right.type()}")
 
+def eval_numeric_infix_expression(operator, left, right):
+    # Coerción implícita: convertir ambos operandos a float para aritmética mixta
+    l_val = float(left.value)
+    r_val = float(right.value)
+    # Si alguno es Float, el resultado es Float; si ambos son Integer, se preserva Integer
+    is_float = left.type() == ObjType.FLOAT or right.type() == ObjType.FLOAT
+    make = Float if is_float else Integer
+
+    if operator == "+":   return make(l_val + r_val)
+    elif operator == "-": return make(l_val - r_val)
+    elif operator == "*": return make(l_val * r_val)
+    elif operator == "/":
+        if r_val == 0.0:
+            return Error("división por cero")
+        return Float(l_val / r_val)  # la división siempre produce float
+    elif operator == "**":
+        if l_val == 0 and r_val < 0:
+            return Error("cálculo de potencia inválido: cero elevado a potencia negativa")
+        result = l_val ** r_val
+        return Float(result) if is_float else Integer(int(result))
+    elif operator == "<":  return native_bool_to_bool_object(l_val < r_val)
+    elif operator == ">":  return native_bool_to_bool_object(l_val > r_val)
+    elif operator == "<=": return native_bool_to_bool_object(l_val <= r_val)
+    elif operator == ">=": return native_bool_to_bool_object(l_val >= r_val)
+    elif operator == "==": return native_bool_to_bool_object(l_val == r_val)
+    elif operator == "!=": return native_bool_to_bool_object(l_val != r_val)
+    return Error(f"operador desconocido: {left.type()} {operator} {right.type()}")
+
 def eval_integer_infix_expression(operator, left, right):
     l_val = left.value
     r_val = right.value
@@ -496,7 +561,7 @@ def eval_integer_infix_expression(operator, left, right):
     elif operator == "/":
         if r_val == 0:
             return Error("división por cero")
-        return Integer(l_val // r_val)
+        return Float(l_val / r_val)  # / siempre produce float (semántica Python 3)
     elif operator == "**":
         if l_val == 0 and r_val < 0:
             return Error("cálculo de potencia inválido: cero elevado a potencia negativa")

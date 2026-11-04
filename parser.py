@@ -46,6 +46,7 @@ class Parser:
         
         self.register_prefix(IDENT, self.parse_identifier)
         self.register_prefix(INT, self.parse_integer_literal)
+        self.register_prefix(FLOAT, self.parse_float_literal)
         self.register_prefix(STRING, self.parse_string_literal)
         self.register_prefix(BANG, self.parse_prefix_expression)
         self.register_prefix(MINUS, self.parse_prefix_expression)
@@ -166,6 +167,16 @@ class Parser:
             line = self.cur_token.line if self.cur_token else "?"
             col = self.cur_token.column if self.cur_token else "?"
             self.errors.append(f"Línea {line}, Columna {col}: no se pudo parsear {self.cur_token.literal} como entero")
+            return None
+
+    def parse_float_literal(self):
+        try:
+            value = float(self.cur_token.literal)
+            return FloatLiteral(self.cur_token, value)
+        except ValueError:
+            line = self.cur_token.line if self.cur_token else "?"
+            col = self.cur_token.column if self.cur_token else "?"
+            self.errors.append(f"Línea {line}, Columna {col}: no se pudo parsear {self.cur_token.literal} como float")
             return None
 
     def parse_string_literal(self):

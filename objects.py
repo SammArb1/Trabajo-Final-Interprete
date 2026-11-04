@@ -2,6 +2,7 @@
 
 class ObjType:
     INTEGER = "INTEGER"
+    FLOAT = "FLOAT"
     BOOLEAN = "BOOLEAN"
     STRING = "STRING"
     NULL = "NULL"
@@ -22,7 +23,17 @@ class Integer(Obj):
     def type(self): return ObjType.INTEGER
     def inspect(self): return str(self.value)
     def __eq__(self, other):
-        return isinstance(other, Integer) and self.value == other.value
+        # Permite comparación por valor entre enteros y flotantes
+        return isinstance(other, (Integer, Float)) and self.value == other.value
+
+class Float(Obj):
+    def __init__(self, value):
+        self.value = float(value)
+    def type(self): return ObjType.FLOAT
+    def inspect(self): return str(self.value)
+    def __eq__(self, other):
+        # Permite comparación por valor entre flotantes y enteros
+        return isinstance(other, (Float, Integer)) and self.value == other.value
 
 class StringObj(Obj):
     def __init__(self, value):

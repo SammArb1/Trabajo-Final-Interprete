@@ -48,6 +48,11 @@ class IntegerLiteral(Expression):
         self.token = token
         self.value = value
 
+class FloatLiteral(Expression):
+    def __init__(self, token, value):
+        self.token = token
+        self.value = value
+
 class StringLiteral(Expression):
     def __init__(self, token, value):
         self.token = token

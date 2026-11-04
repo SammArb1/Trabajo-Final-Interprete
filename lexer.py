@@ -2,7 +2,7 @@
 
 from tokens import Token, lookup_ident, EQ, ASSIGN, PLUS, MINUS, BANG, NOT_EQ
 from tokens import SLASH, POW, ASTERISK, LTE, LT, GTE, GT, SEMICOLON, COMMA
-from tokens import LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, EOF, ILLEGAL, INT, STRING, AND, OR
+from tokens import LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, EOF, ILLEGAL, INT, FLOAT, STRING, AND, OR
 
 class Lexer:
     def __init__(self, input_text):
@@ -126,7 +126,8 @@ class Lexer:
                 type_ = lookup_ident(literal)
                 return Token(type_, literal, tok_line, tok_col)
             elif self.is_digit(self.ch):
-                return Token(INT, self.read_number(), tok_line, tok_col)
+                num_literal, num_type = self.read_number()
+                return Token(num_type, num_literal, tok_line, tok_col)
             else:
                 tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
 
@@ -151,9 +152,16 @@ class Lexer:
 
     def read_number(self):
         pos = self.position
+        is_float = False
         while self.is_digit(self.ch):
             self.read_char()
-        return self.input[pos:self.position]
+        # Verificar si hay parte decimal válida (. seguido de al menos un dígito)
+        if self.ch == '.' and self.is_digit(self.peek_char()):
+            is_float = True
+            self.read_char()  # Consumir el punto
+            while self.is_digit(self.ch):
+                self.read_char()
+        return self.input[pos:self.position], (FLOAT if is_float else INT)
 
     def read_string(self, quote_type):
         chars = []
