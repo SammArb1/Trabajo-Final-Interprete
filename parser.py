@@ -317,27 +317,15 @@ class Parser:
         return PrefixExpression(token, operator, right)
 
     def parse_infix_expression(self, left):
-        """
-        Propósito:
-            Construye un nodo InfixExpression para operadores binarios aritméticos,
-            relacionales y lógicos (incluyendo 'and', 'or', '&&', '||').
-
-        Precedencia y Asociatividad:
-            - Operadores estándar (+, -, *, /, and, or, ==, etc.): asociatividad por la izquierda
-              utilizando la precedencia actual del operador.
-            - Operador de potencia (**): asociatividad hacia la derecha decrementando en 1
-              la precedencia efectiva al parsear el operando derecho.
-        """
-        token = self.cur_token
-        operator = self.cur_token.literal
+        # Construye InfixExpression; ** es right-assoc (precedencia-1), el resto left-assoc
+        token      = self.cur_token
+        operator   = self.cur_token.literal
         precedence = self.cur_precedence()
         self.next_token()
         if operator == "**":
-            # Asociatividad hacia la derecha para potencia
-            right = self.parse_expression(precedence - 1)
+            right = self.parse_expression(precedence - 1)   # asociatividad a la derecha
         else:
-            # Asociatividad por la izquierda para operaciones aritméticas, relacionales y lógicas
-            right = self.parse_expression(precedence)
+            right = self.parse_expression(precedence)       # asociatividad a la izquierda
         return InfixExpression(token, left, operator, right)
         
     def parse_assign_expression(self, left):
