@@ -1,0 +1,32 @@
+let clasificar = function(n) {
+    if (n < 0) {
+        return "negativo"
+    } elif (n == 0) {
+        return "cero"
+    } else {
+        if (n < 10) {
+            return "positivo de un digito"
+        } else {
+            return "positivo grande"
+        }
+    }
+}
+
+print(clasificar(-5))
+print(clasificar(0))
+print(clasificar(7))
+print(clasificar(42))
+
+let edad = 20
+if (edad >= 18 and edad < 65) {
+    print("adulto en edad laboral")
+}
+print(false and (1 / 0))
+print(true or (1 / 0))
+
+let x = 1
+if (true) {
+    let x = 100
+    print("x interna:", x)
+}
+print("x externa:", x)
