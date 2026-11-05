@@ -1,410 +1,181 @@
-# ANALIZADOR SINTÁCTICO (PARSER PRATT) — construye el AST a partir de tokens con precedencias
+# ANALIZADOR LÉXICO — convierte texto fuente en stream de tokens con posición exacta
 
-from tokens import *
-from ast_nodes import *
+from tokens import Token, lookup_ident, EQ, ASSIGN, PLUS, MINUS, BANG, NOT_EQ
+from tokens import SLASH, POW, ASTERISK, LTE, LT, GTE, GT, SEMICOLON, COMMA
+from tokens import LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET, EOF, ILLEGAL, INT, FLOAT, STRING, AND, OR
 
-# Niveles de precedencia para parsing de expresiones (Pratt Parser)
-LOWEST = 1
-ASSIGN_PREC = 2
-OR_PREC = 3
-AND_PREC = 4
-EQUALS = 5
-LESSGREATER = 6
-SUM = 7
-PRODUCT = 8
-PREFIX = 9      # -x, !x: por debajo de ** para que -2 ** 2 sea -(2 ** 2), como en Python
-POWER = 10      # ** liga más fuerte que * y /
-CALL = 11
-INDEX = 12
+class Lexer:
+    def __init__(self, input_text):
+        self.input         = input_text
+        self.position      = 0
+        self.read_position = 0
+        self.ch            = ''
+        self.line          = 1
+        self.column        = 0
+        self.errors        = []   # errores léxicos (cadenas no cerradas, chars ilegales)
+        self.read_char()
 
-# Operadores con asociatividad por la derecha: 2 ** 3 ** 2 == 2 ** (3 ** 2)
-RIGHT_ASSOCIATIVE = {POW}
+    def read_char(self):
+        # Avanza el cursor; actualiza línea y columna para tracking de posición exacta
+        if self.ch == '\n':
+            self.line  += 1
+            self.column = 0
+        self.ch = self.input[self.read_position] if self.read_position < len(self.input) else ''
+        self.position      = self.read_position
+        self.read_position += 1
+        self.column        += 1
 
-# Tabla de precedencias por tipo de operador
-PRECEDENCES = {
-    ASSIGN: ASSIGN_PREC,
-    OR: OR_PREC,
-    AND: AND_PREC,
-    EQ: EQUALS,
-    NOT_EQ: EQUALS,
-    LT: LESSGREATER,
-    GT: LESSGREATER,
-    LTE: LESSGREATER,
-    GTE: LESSGREATER,
-    PLUS: SUM,
-    MINUS: SUM,
-    SLASH: PRODUCT,
-    ASTERISK: PRODUCT,
-    POW: POWER,
-    LPAREN: CALL,
-    LBRACKET: INDEX
-}
-
-class Parser:
-    def __init__(self, lexer):
-        self.lexer = lexer
-        self.cur_token = None
-        self.peek_token = None
-        self.errors = []
-        self.loop_depth = 0   # ciclos abiertos en el punto actual; 0 → 'break' no es válido
-        self.prefix_parse_fns = {}
-        self.infix_parse_fns = {}
-        
-        self.register_prefix(IDENT, self.parse_identifier)
-        self.register_prefix(INT, self.parse_integer_literal)
-        self.register_prefix(FLOAT, self.parse_float_literal)
-        self.register_prefix(STRING, self.parse_string_literal)
-        self.register_prefix(BANG, self.parse_prefix_expression)
-        self.register_prefix(MINUS, self.parse_prefix_expression)
-        self.register_prefix(TRUE, self.parse_boolean)
-        self.register_prefix(FALSE, self.parse_boolean)
-        self.register_prefix(LPAREN, self.parse_grouped_expression)
-        self.register_prefix(IF, self.parse_if_expression)
-        self.register_prefix(FUNCTION, self.parse_function_literal)
-        self.register_prefix(LBRACKET, self.parse_array_literal)
-        self.register_prefix(WHILE, self.parse_while_expression)
-        self.register_prefix(FOR, self.parse_for_expression)
-
-        self.register_infix(PLUS, self.parse_infix_expression)
-        self.register_infix(MINUS, self.parse_infix_expression)
-        self.register_infix(SLASH, self.parse_infix_expression)
-        self.register_infix(ASTERISK, self.parse_infix_expression)
-        self.register_infix(POW, self.parse_infix_expression)
-        self.register_infix(EQ, self.parse_infix_expression)
-        self.register_infix(NOT_EQ, self.parse_infix_expression)
-        self.register_infix(LT, self.parse_infix_expression)
-        self.register_infix(GT, self.parse_infix_expression)
-        self.register_infix(LTE, self.parse_infix_expression)
-        self.register_infix(GTE, self.parse_infix_expression)
-        self.register_infix(AND, self.parse_infix_expression)
-        self.register_infix(OR, self.parse_infix_expression)
-        self.register_infix(LPAREN, self.parse_call_expression)
-        self.register_infix(LBRACKET, self.parse_index_expression)
-        self.register_infix(ASSIGN, self.parse_assign_expression)
-
-        self.next_token()
-        self.next_token()
-
-    def register_prefix(self, token_type, fn):
-        self.prefix_parse_fns[token_type] = fn
-
-    def register_infix(self, token_type, fn):
-        self.infix_parse_fns[token_type] = fn
+    def peek_char(self):
+        # Lee el siguiente carácter sin consumirlo (lookahead de 1)
+        return self.input[self.read_position] if self.read_position < len(self.input) else ''
 
     def next_token(self):
-        self.cur_token = self.peek_token
-        self.peek_token = self.lexer.next_token()
+        self.skip_whitespace()
+        tok_line = self.line
+        tok_col  = self.column
+        tok      = None
 
-    def parse_program(self):
-        program = Program()
-        while self.cur_token.type != EOF:
-            stmt = self.parse_statement()
-            if stmt is not None:
-                program.statements.append(stmt)
-            self.next_token()
-        return program
-
-    def parse_statement(self):
-        if self.cur_token.type == LET:
-            return self.parse_let_statement()
-        elif self.cur_token.type == RETURN:
-            return self.parse_return_statement()
-        elif self.cur_token.type == BREAK:
-            return self.parse_break_statement()
-        else:
-            return self.parse_expression_statement()
-
-    def parse_let_statement(self):
-        stmt_token = self.cur_token
-        if not self.expect_peek(IDENT): return None
-        name = Identifier(self.cur_token, self.cur_token.literal)
-        if not self.expect_peek(ASSIGN): return None
-        self.next_token()
-        value = self.parse_expression(LOWEST)
-        if self.peek_token.type == SEMICOLON:
-            self.next_token()
-        return LetStatement(stmt_token, name, value)
-
-    def parse_return_statement(self):
-        stmt_token = self.cur_token
-        self.next_token()
-        return_value = self.parse_expression(LOWEST)
-        if self.peek_token.type == SEMICOLON:
-            self.next_token()
-        return ReturnStatement(stmt_token, return_value)
-
-    def parse_break_statement(self):
-        stmt_token = self.cur_token
-        if self.peek_token.type == SEMICOLON:
-            self.next_token()
-        # 'break' solo tiene sentido dentro de un ciclo: se rechaza aquí, antes de evaluar
-        if self.loop_depth == 0:
-            self.errors.append(
-                f"Línea {stmt_token.line}, Columna {stmt_token.column}: 'break' fuera de un ciclo")
-            return None
-        return BreakStatement(stmt_token)
-
-    def parse_expression_statement(self):
-        stmt_token = self.cur_token
-        expression = self.parse_expression(LOWEST)
-        if self.peek_token.type == SEMICOLON:
-            self.next_token()
-        return ExpressionStatement(stmt_token, expression)
-
-    def parse_expression(self, precedence):
-        prefix = self.prefix_parse_fns.get(self.cur_token.type)
-        if prefix is None:
-            line = self.cur_token.line if self.cur_token else "?"
-            col = self.cur_token.column if self.cur_token else "?"
-            self.errors.append(f"Línea {line}, Columna {col}: no se encontró prefijo para {self.cur_token.type}")
-            return None
-        left_exp = prefix()
-        while self.peek_token.type != SEMICOLON and precedence < self.peek_precedence():
-            infix = self.infix_parse_fns.get(self.peek_token.type)
-            if infix is None:
-                return left_exp
-            self.next_token()
-            left_exp = infix(left_exp)
-        return left_exp
-
-    def parse_identifier(self):
-        return Identifier(self.cur_token, self.cur_token.literal)
-
-    def parse_integer_literal(self):
-        try:
-            value = int(self.cur_token.literal)
-            return IntegerLiteral(self.cur_token, value)
-        except ValueError:
-            line = self.cur_token.line if self.cur_token else "?"
-            col = self.cur_token.column if self.cur_token else "?"
-            self.errors.append(f"Línea {line}, Columna {col}: no se pudo parsear {self.cur_token.literal} como entero")
-            return None
-
-    def parse_float_literal(self):
-        try:
-            value = float(self.cur_token.literal)
-            return FloatLiteral(self.cur_token, value)
-        except ValueError:
-            line = self.cur_token.line if self.cur_token else "?"
-            col = self.cur_token.column if self.cur_token else "?"
-            self.errors.append(f"Línea {line}, Columna {col}: no se pudo parsear {self.cur_token.literal} como float")
-            return None
-
-    def parse_string_literal(self):
-        return StringLiteral(self.cur_token, self.cur_token.literal)
-
-    def parse_boolean(self):
-        return Boolean(self.cur_token, self.cur_token.type == TRUE)
-
-    def parse_grouped_expression(self):
-        self.next_token()
-        exp = self.parse_expression(LOWEST)
-        if not self.expect_peek(RPAREN): return None
-        return exp
-
-    def parse_if_expression(self):
-        token = self.cur_token
-        if not self.expect_peek(LPAREN): return None
-        self.next_token()
-        condition = self.parse_expression(LOWEST)
-        if not self.expect_peek(RPAREN): return None
-        if not self.expect_peek(LBRACE): return None
-        consequence = self.parse_block_statement()
-        elifs = []
-        while self.peek_token.type == ELIF:
-            self.next_token()
-            if not self.expect_peek(LPAREN): return None
-            self.next_token()
-            elif_cond = self.parse_expression(LOWEST)
-            if not self.expect_peek(RPAREN): return None
-            if not self.expect_peek(LBRACE): return None
-            elif_cons = self.parse_block_statement()
-            elifs.append((elif_cond, elif_cons))
-        alternative = None
-        if self.peek_token.type == ELSE:
-            self.next_token()
-            if not self.expect_peek(LBRACE): return None
-            alternative = self.parse_block_statement()
-        return IfExpression(token, condition, consequence, alternative, elifs)
-
-    def parse_while_expression(self):
-        token = self.cur_token
-        if not self.expect_peek(LPAREN): return None
-        self.next_token()
-        condition = self.parse_expression(LOWEST)
-        if not self.expect_peek(RPAREN): return None
-        if not self.expect_peek(LBRACE): return None
-        body = self.parse_loop_body()
-        return WhileExpression(token, condition, body)
-
-    def parse_for_expression(self):
-        # for (<init>; <condición>; <update>) { <cuerpo> } — las tres partes son opcionales
-        token = self.cur_token
-        if not self.expect_peek(LPAREN): return None
-        self.next_token()   # cur = primer token del init, o ';' si no hay init
-
-        # 1. Inicialización: let o expresión. Ambas consumen su ';' final → cur queda en ';'
-        init = None
-        if self.cur_token.type != SEMICOLON:
-            if self.cur_token.type == LET:
-                init = self.parse_let_statement()
+        if self.ch == '=':
+            if self.peek_char() == '=':
+                ch = self.ch; self.read_char()
+                tok = Token(EQ, ch + self.ch, tok_line, tok_col)
             else:
-                init = self.parse_expression_statement()
-            if init is None: return None
-            if self.cur_token.type != SEMICOLON:
-                self.errors.append(
-                    f"Línea {self.peek_token.line}, Columna {self.peek_token.column}: "
-                    f"se esperaba ';' después de la inicialización del for")
-                return None
-        self.next_token()   # cur = primer token de la condición, o ';' si no hay
-
-        # 2. Condición
-        condition = None
-        if self.cur_token.type != SEMICOLON:
-            condition = self.parse_expression(LOWEST)
-            if not self.expect_peek(SEMICOLON): return None
-        self.next_token()   # cur = primer token del update, o ')' si no hay
-
-        # 3. Actualización: solo se espera ')' después si hubo expresión;
-        #    si no la hubo, cur ya está parado en ')'
-        update = None
-        if self.cur_token.type != RPAREN:
-            update = self.parse_expression(LOWEST)
-            if not self.expect_peek(RPAREN): return None
-
-        if not self.expect_peek(LBRACE): return None
-        body = self.parse_loop_body()
-        return ForExpression(token, init, condition, update, body)
-
-    def parse_loop_body(self):
-        # Cuerpo de while/for: dentro de él 'break' es válido
-        self.loop_depth += 1
-        try:
-            return self.parse_block_statement()
-        finally:
-            self.loop_depth -= 1
-
-    def parse_block_statement(self):
-        token = self.cur_token
-        statements = []
-        self.next_token()
-        while self.cur_token.type != RBRACE and self.cur_token.type != EOF:
-            stmt = self.parse_statement()
-            if stmt is not None:
-                statements.append(stmt)
-            self.next_token()
-        return BlockStatement(token, statements)
-
-    def parse_function_literal(self):
-        token = self.cur_token
-        if not self.expect_peek(LPAREN): return None
-        parameters = self.parse_function_parameters()
-        if not self.expect_peek(LBRACE): return None
-        # El cuerpo de una función empieza sin ciclos abiertos: un 'break' dentro
-        # de una función no puede salir de un ciclo que esté fuera de ella
-        saved_depth, self.loop_depth = self.loop_depth, 0
-        try:
-            body = self.parse_block_statement()
-        finally:
-            self.loop_depth = saved_depth
-        return FunctionLiteral(token, parameters, body)
-
-    def parse_function_parameters(self):
-        identifiers = []
-        if self.peek_token.type == RPAREN:
-            self.next_token()
-            return identifiers
-        self.next_token()
-        ident = Identifier(self.cur_token, self.cur_token.literal)
-        identifiers.append(ident)
-        while self.peek_token.type == COMMA:
-            self.next_token()
-            self.next_token()
-            ident = Identifier(self.cur_token, self.cur_token.literal)
-            identifiers.append(ident)
-        if not self.expect_peek(RPAREN): return None
-        return identifiers
-
-    def parse_array_literal(self):
-        token = self.cur_token
-        elements = self.parse_expression_list(RBRACKET)
-        return ArrayLiteral(token, elements)
-
-    def parse_expression_list(self, end):
-        elements = []
-        if self.peek_token.type == end:
-            self.next_token()
-            return elements
-        self.next_token()
-        elements.append(self.parse_expression(LOWEST))
-        while self.peek_token.type == COMMA:
-            self.next_token()
-            self.next_token()
-            elements.append(self.parse_expression(LOWEST))
-        if not self.expect_peek(end): return None
-        return elements
-
-    def parse_prefix_expression(self):
-        token = self.cur_token
-        operator = self.cur_token.literal
-        self.next_token()
-        right = self.parse_expression(PREFIX)
-        return PrefixExpression(token, operator, right)
-
-    def parse_infix_expression(self, left):
-        # Construye InfixExpression. Left-assoc: el operando derecho se parsea con la misma
-        # precedencia (a - b - c = (a - b) - c). Right-assoc (**): con una menos, para que
-        # otro ** a la derecha sí se absorba (a ** b ** c = a ** (b ** c))
-        token      = self.cur_token
-        operator   = self.cur_token.literal
-        precedence = self.cur_precedence()
-        self.next_token()
-        if token.type in RIGHT_ASSOCIATIVE:
-            right = self.parse_expression(precedence - 1)
+                tok = Token(ASSIGN, self.ch, tok_line, tok_col)
+        elif self.ch == '+':
+            tok = Token(PLUS, self.ch, tok_line, tok_col)
+        elif self.ch == '-':
+            tok = Token(MINUS, self.ch, tok_line, tok_col)
+        elif self.ch == '!':
+            if self.peek_char() == '=':
+                ch = self.ch; self.read_char()
+                tok = Token(NOT_EQ, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(BANG, self.ch, tok_line, tok_col)
+        elif self.ch == '/':
+            tok = Token(SLASH, self.ch, tok_line, tok_col)
+        elif self.ch == '*':
+            if self.peek_char() == '*':
+                ch = self.ch; self.read_char()
+                tok = Token(POW, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(ASTERISK, self.ch, tok_line, tok_col)
+        elif self.ch == '<':
+            if self.peek_char() == '=':
+                ch = self.ch; self.read_char()
+                tok = Token(LTE, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(LT, self.ch, tok_line, tok_col)
+        elif self.ch == '>':
+            if self.peek_char() == '=':
+                ch = self.ch; self.read_char()
+                tok = Token(GTE, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(GT, self.ch, tok_line, tok_col)
+        elif self.ch == ';':
+            tok = Token(SEMICOLON, self.ch, tok_line, tok_col)
+        elif self.ch == ',':
+            tok = Token(COMMA, self.ch, tok_line, tok_col)
+        elif self.ch == '(':
+            tok = Token(LPAREN, self.ch, tok_line, tok_col)
+        elif self.ch == ')':
+            tok = Token(RPAREN, self.ch, tok_line, tok_col)
+        elif self.ch == '{':
+            tok = Token(LBRACE, self.ch, tok_line, tok_col)
+        elif self.ch == '}':
+            tok = Token(RBRACE, self.ch, tok_line, tok_col)
+        elif self.ch == '[':
+            tok = Token(LBRACKET, self.ch, tok_line, tok_col)
+        elif self.ch == ']':
+            tok = Token(RBRACKET, self.ch, tok_line, tok_col)
+        elif self.ch == '&':
+            # && → AND; & suelto es ilegal en este lenguaje
+            if self.peek_char() == '&':
+                ch = self.ch; self.read_char()
+                tok = Token(AND, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
+        elif self.ch == '|':
+            # || → OR; | suelto es ilegal en este lenguaje
+            if self.peek_char() == '|':
+                ch = self.ch; self.read_char()
+                tok = Token(OR, ch + self.ch, tok_line, tok_col)
+            else:
+                tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
+        elif self.ch == '"' or self.ch == "'":
+            quote_type = self.ch
+            str_val, err = self.read_string(quote_type)
+            if err is not None:
+                self.errors.append(err)
+                tok = Token(ILLEGAL, err, tok_line, tok_col)
+            else:
+                tok = Token(STRING, str_val, tok_line, tok_col)
+        elif self.ch == '':
+            tok = Token(EOF, "", tok_line, tok_col)
         else:
-            right = self.parse_expression(precedence)
-        return InfixExpression(token, left, operator, right)
-        
-    def parse_assign_expression(self, left):
-        # Validación de lvalue: solo identificadores o expresiones de índice (arr[i]) son asignables
-        if not isinstance(left, (Identifier, IndexExpression)):
-            line = self.cur_token.line if self.cur_token else "?"
-            col = self.cur_token.column if self.cur_token else "?"
-            self.errors.append(f"Línea {line}, Columna {col}: el lado izquierdo de '=' debe ser un identificador o un elemento indexado (arr[i])")
-            return None
-        token = self.cur_token
-        self.next_token()
-        value = self.parse_expression(LOWEST)
-        return AssignExpression(token, left, value)
+            if self.is_letter(self.ch):
+                literal = self.read_identifier()
+                type_   = lookup_ident(literal)
+                return Token(type_, literal, tok_line, tok_col)   # ya avanzó en read_identifier
+            elif self.is_digit(self.ch):
+                num_literal, num_type = self.read_number()
+                return Token(num_type, num_literal, tok_line, tok_col)  # ya avanzó en read_number
+            else:
+                tok = Token(ILLEGAL, self.ch, tok_line, tok_col)
 
-    def parse_call_expression(self, function):
-        token = self.cur_token
-        arguments = self.parse_expression_list(RPAREN)
-        return CallExpression(token, function, arguments)
+        self.read_char()
+        return tok
 
-    def parse_index_expression(self, left):
-        token = self.cur_token
-        self.next_token()
-        index = self.parse_expression(LOWEST)
-        if not self.expect_peek(RBRACKET): return None
-        return IndexExpression(token, left, index)
+    def skip_whitespace(self):
+        while self.ch in (' ', '\t', '\n', '\r'):
+            self.read_char()
 
-    def expect_peek(self, t):
-        if self.peek_token.type == t:
-            self.next_token()
-            return True
-        else:
-            self.peek_error(t)
-            return False
+    def is_letter(self, ch):
+        return 'a' <= ch <= 'z' or 'A' <= ch <= 'Z' or ch == '_'
 
-    def peek_error(self, t):
-        line = self.peek_token.line if self.peek_token else "?"
-        col = self.peek_token.column if self.peek_token else "?"
-        msg = f"Línea {line}, Columna {col}: se esperaba que el siguiente token fuera {t}, pero fue {self.peek_token.type}"
-        self.errors.append(msg)
+    def is_digit(self, ch):
+        return '0' <= ch <= '9'
 
-    def cur_precedence(self):
-        return PRECEDENCES.get(self.cur_token.type, LOWEST)
+    def read_identifier(self):
+        pos = self.position
+        while self.is_letter(self.ch) or self.is_digit(self.ch):
+            self.read_char()
+        return self.input[pos:self.position]
 
-    def peek_precedence(self):
-        return PRECEDENCES.get(self.peek_token.type, LOWEST)
+    def read_number(self):
+        pos      = self.position
+        is_float = False
+        while self.is_digit(self.ch):
+            self.read_char()
+        # Punto decimal válido: '.' seguido de al menos un dígito
+        if self.ch == '.' and self.is_digit(self.peek_char()):
+            is_float = True
+            self.read_char()  # consume el punto
+            while self.is_digit(self.ch):
+                self.read_char()
+        return self.input[pos:self.position], (FLOAT if is_float else INT)
+
+    def read_string(self, quote_type):
+        chars      = []
+        start_line = self.line
+        start_col  = self.column
+        self.read_char()  # avanza más allá de la comilla de apertura
+        while self.ch != quote_type:
+            # Cadena sin cerrar: salto de línea o EOF dentro de la cadena
+            if self.ch == '' or self.ch == '\n':
+                return None, f"Línea {start_line}, Columna {start_col}: cadena no cerrada antes de fin de línea o archivo"
+            if self.ch == '\\':
+                self.read_char()
+                # Tabla de secuencias de escape reconocidas
+                if   self.ch == 'n':         chars.append('\n')
+                elif self.ch == 't':         chars.append('\t')
+                elif self.ch == 'r':         chars.append('\r')
+                elif self.ch == '\\':        chars.append('\\')
+                elif self.ch == quote_type:  chars.append(quote_type)
+                elif self.ch == '':
+                    return None, f"Línea {start_line}, Columna {start_col}: cadena no cerrada antes de fin de archivo"
+                else:
+                    chars.append(self.ch)   # escape desconocido: se pasa literal
+            else:
+                chars.append(self.ch)
+            self.read_char()
+        return "".join(chars), None

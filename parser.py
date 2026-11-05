@@ -4,21 +4,18 @@ from tokens import *
 from ast_nodes import *
 
 # Niveles de precedencia para parsing de expresiones (Pratt Parser)
-LOWEST = 1
-ASSIGN_PREC = 2
-OR_PREC = 3
-AND_PREC = 4
-EQUALS = 5
-LESSGREATER = 6
-SUM = 7
-PRODUCT = 8
-PREFIX = 9      # -x, !x: por debajo de ** para que -2 ** 2 sea -(2 ** 2), como en Python
-POWER = 10      # ** liga más fuerte que * y /
-CALL = 11
-INDEX = 12
-
-# Operadores con asociatividad por la derecha: 2 ** 3 ** 2 == 2 ** (3 ** 2)
-RIGHT_ASSOCIATIVE = {POW}
+LOWEST      = 1   # Nivel base (por defecto)
+ASSIGN_PREC = 2   # = (asignación: total = 5)
+OR_PREC     = 3   # or, || (tu Fase 2)
+AND_PREC    = 4   # and, && (tu Fase 2)
+EQUALS      = 5   # ==, !=
+LESSGREATER = 6   # <, >, <=, >=
+SUM         = 7   # +, -
+PRODUCT     = 8   # *, /
+POWER       = 9   # ** (potencia)
+PREFIX      = 10  # !x, -5 (operadores unarios)
+CALL        = 11  # funcion(...)
+INDEX       = 12  # arreglo[...]
 
 # Tabla de precedencias por tipo de operador
 PRECEDENCES = {
@@ -46,7 +43,6 @@ class Parser:
         self.cur_token = None
         self.peek_token = None
         self.errors = []
-        self.loop_depth = 0   # ciclos abiertos en el punto actual; 0 → 'break' no es válido
         self.prefix_parse_fns = {}
         self.infix_parse_fns = {}
         
@@ -137,11 +133,6 @@ class Parser:
         stmt_token = self.cur_token
         if self.peek_token.type == SEMICOLON:
             self.next_token()
-        # 'break' solo tiene sentido dentro de un ciclo: se rechaza aquí, antes de evaluar
-        if self.loop_depth == 0:
-            self.errors.append(
-                f"Línea {stmt_token.line}, Columna {stmt_token.column}: 'break' fuera de un ciclo")
-            return None
         return BreakStatement(stmt_token)
 
     def parse_expression_statement(self):
@@ -234,55 +225,37 @@ class Parser:
         condition = self.parse_expression(LOWEST)
         if not self.expect_peek(RPAREN): return None
         if not self.expect_peek(LBRACE): return None
-        body = self.parse_loop_body()
+        body = self.parse_block_statement()
         return WhileExpression(token, condition, body)
 
     def parse_for_expression(self):
-        # for (<init>; <condición>; <update>) { <cuerpo> } — las tres partes son opcionales
         token = self.cur_token
         if not self.expect_peek(LPAREN): return None
-        self.next_token()   # cur = primer token del init, o ';' si no hay init
-
-        # 1. Inicialización: let o expresión. Ambas consumen su ';' final → cur queda en ';'
+        self.next_token()
+        
+        # 1. Inicialización
         init = None
         if self.cur_token.type != SEMICOLON:
-            if self.cur_token.type == LET:
-                init = self.parse_let_statement()
-            else:
-                init = self.parse_expression_statement()
-            if init is None: return None
-            if self.cur_token.type != SEMICOLON:
-                self.errors.append(
-                    f"Línea {self.peek_token.line}, Columna {self.peek_token.column}: "
-                    f"se esperaba ';' después de la inicialización del for")
-                return None
-        self.next_token()   # cur = primer token de la condición, o ';' si no hay
+            init = self.parse_statement()
+        if self.cur_token.type == SEMICOLON:
+            self.next_token()
 
         # 2. Condición
         condition = None
         if self.cur_token.type != SEMICOLON:
             condition = self.parse_expression(LOWEST)
             if not self.expect_peek(SEMICOLON): return None
-        self.next_token()   # cur = primer token del update, o ')' si no hay
+        if self.cur_token.type == SEMICOLON:
+            self.next_token()
 
-        # 3. Actualización: solo se espera ')' después si hubo expresión;
-        #    si no la hubo, cur ya está parado en ')'
+        # 3. Incremento/Actualización
         update = None
         if self.cur_token.type != RPAREN:
             update = self.parse_expression(LOWEST)
-            if not self.expect_peek(RPAREN): return None
-
+        if not self.expect_peek(RPAREN): return None
         if not self.expect_peek(LBRACE): return None
-        body = self.parse_loop_body()
+        body = self.parse_block_statement()
         return ForExpression(token, init, condition, update, body)
-
-    def parse_loop_body(self):
-        # Cuerpo de while/for: dentro de él 'break' es válido
-        self.loop_depth += 1
-        try:
-            return self.parse_block_statement()
-        finally:
-            self.loop_depth -= 1
 
     def parse_block_statement(self):
         token = self.cur_token
@@ -300,13 +273,7 @@ class Parser:
         if not self.expect_peek(LPAREN): return None
         parameters = self.parse_function_parameters()
         if not self.expect_peek(LBRACE): return None
-        # El cuerpo de una función empieza sin ciclos abiertos: un 'break' dentro
-        # de una función no puede salir de un ciclo que esté fuera de ella
-        saved_depth, self.loop_depth = self.loop_depth, 0
-        try:
-            body = self.parse_block_statement()
-        finally:
-            self.loop_depth = saved_depth
+        body = self.parse_block_statement()
         return FunctionLiteral(token, parameters, body)
 
     def parse_function_parameters(self):
@@ -352,17 +319,15 @@ class Parser:
         return PrefixExpression(token, operator, right)
 
     def parse_infix_expression(self, left):
-        # Construye InfixExpression. Left-assoc: el operando derecho se parsea con la misma
-        # precedencia (a - b - c = (a - b) - c). Right-assoc (**): con una menos, para que
-        # otro ** a la derecha sí se absorba (a ** b ** c = a ** (b ** c))
+        # Construye InfixExpression; ** es right-assoc (precedencia-1), el resto left-assoc
         token      = self.cur_token
         operator   = self.cur_token.literal
         precedence = self.cur_precedence()
         self.next_token()
-        if token.type in RIGHT_ASSOCIATIVE:
-            right = self.parse_expression(precedence - 1)
+        if operator == "**":
+            right = self.parse_expression(precedence - 1)   # asociatividad a la derecha
         else:
-            right = self.parse_expression(precedence)
+            right = self.parse_expression(precedence)       # asociatividad a la izquierda
         return InfixExpression(token, left, operator, right)
         
     def parse_assign_expression(self, left):
@@ -370,7 +335,7 @@ class Parser:
         if not isinstance(left, (Identifier, IndexExpression)):
             line = self.cur_token.line if self.cur_token else "?"
             col = self.cur_token.column if self.cur_token else "?"
-            self.errors.append(f"Línea {line}, Columna {col}: el lado izquierdo de '=' debe ser un identificador o un elemento indexado (arr[i])")
+            self.errors.append(f"Línea {line}, Columna {col}: se esperaba un identificador o indexación para la asignación")
             return None
         token = self.cur_token
         self.next_token()
