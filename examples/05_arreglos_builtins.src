@@ -1,0 +1,32 @@
+let nums = [5, 3, 8, 1]
+print("original:", nums)
+print("longitud:", len(nums))
+print("primero:", nums[0], "ultimo:", nums[len(nums) - 1])
+
+nums[0] = 50
+nums[len(nums) - 1] = 10
+print("mutado:", nums)
+
+let duplicar = function(arr) {
+    for (let i = 0; i < len(arr); i = i + 1) {
+        arr[i] = arr[i] * 2
+    }
+}
+duplicar(nums)
+print("duplicado:", nums)
+
+let maximo = nums[0]
+for (let i = 1; i < len(nums); i = i + 1) {
+    if (nums[i] > maximo) {
+        maximo = nums[i]
+    }
+}
+print("maximo:", maximo)
+
+print(len("compiladores"))
+print(str(123) + "!")
+print(int("42") + 1)
+print(float(3))
+print(type(nums), type("hola"), type(true))
+
+print(nums[99])
