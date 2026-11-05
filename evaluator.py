@@ -165,7 +165,7 @@ def evaluate(node, env):
                 return Error(f"el índice debe ser un entero, no {idx_obj.type()}")
             idx = idx_obj.value
             if idx < 0 or idx >= len(left_obj.elements):
-                return Error(f"índice fuera de rango: {idx}")
+                return Error(f"índice fuera de rango: {idx} (longitud {len(left_obj.elements)})")
             left_obj.elements[idx] = val
             return val
         return Error(f"destino de asignación inválido: {type(node.name).__name__}")
