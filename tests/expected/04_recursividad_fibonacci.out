@@ -1,0 +1,6 @@
+fib(10) = 55
+fib(15) = 610
+5! = 120
+10! = 3628800
+sumar(3, 4) = 7
+contador tras 3 llamadas = 3
