@@ -75,6 +75,11 @@ class Token:
         self.line    = line
         self.column  = column
 
+    @property
+    def col(self):
+        # Alias de 'column' para quien prefiera el nombre corto (token.col)
+        return self.column
+
     def __repr__(self):
         return f"Token({self.type}, {repr(self.literal)}, {self.line}:{self.column})"
 
