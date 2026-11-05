@@ -1,0 +1,12 @@
+original: [5, 3, 8, 1]
+longitud: 4
+primero: 5 ultimo: 1
+mutado: [50, 3, 8, 10]
+duplicado: [100, 6, 16, 20]
+maximo: 100
+12
+123!
+43
+3.0
+ARRAY STRING BOOLEAN
+null
